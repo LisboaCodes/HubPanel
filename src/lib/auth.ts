@@ -8,7 +8,7 @@ function getResend() {
 }
 
 const fromEmail =
-  process.env.EMAIL_FROM || "HubPanel <noreply@hubpanel.dev>";
+  process.env.EMAIL_FROM || "HubPanel <onboarding@resend.dev>";
 
 /**
  * Comma-separated list of emails that are allowed to sign in.
