@@ -1,4 +1,4 @@
-import type { Adapter, AdapterUser, VerificationToken } from "next-auth/adapters";
+import type { Adapter, AdapterUser, AdapterAccount, VerificationToken } from "next-auth/adapters";
 import { Pool } from "pg";
 import { getDatabaseConfigs } from "./db";
 
@@ -72,7 +72,7 @@ async function ensureTables(): Promise<void> {
 
 export function PgAdapter(): Adapter {
   return {
-    async createUser(user) {
+    async createUser(user: Omit<AdapterUser, "id">): Promise<AdapterUser> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -84,7 +84,7 @@ export function PgAdapter(): Adapter {
       return result.rows[0] as AdapterUser;
     },
 
-    async getUser(id) {
+    async getUser(id: string): Promise<AdapterUser | null> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -94,7 +94,7 @@ export function PgAdapter(): Adapter {
       return (result.rows[0] as AdapterUser) ?? null;
     },
 
-    async getUserByEmail(email) {
+    async getUserByEmail(email: string): Promise<AdapterUser | null> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -104,7 +104,7 @@ export function PgAdapter(): Adapter {
       return (result.rows[0] as AdapterUser) ?? null;
     },
 
-    async getUserByAccount({ providerAccountId, provider }) {
+    async getUserByAccount({ providerAccountId, provider }: Pick<AdapterAccount, "providerAccountId" | "provider">): Promise<AdapterUser | null> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -117,7 +117,7 @@ export function PgAdapter(): Adapter {
       return (result.rows[0] as AdapterUser) ?? null;
     },
 
-    async updateUser(user) {
+    async updateUser(user: Partial<AdapterUser> & Pick<AdapterUser, "id">): Promise<AdapterUser> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -133,7 +133,7 @@ export function PgAdapter(): Adapter {
       return result.rows[0] as AdapterUser;
     },
 
-    async linkAccount(account) {
+    async linkAccount(account: AdapterAccount): Promise<void> {
       await ensureTables();
       const p = getAuthPool();
       await p.query(
@@ -148,7 +148,7 @@ export function PgAdapter(): Adapter {
       );
     },
 
-    async createVerificationToken(verificationToken) {
+    async createVerificationToken(verificationToken: VerificationToken): Promise<VerificationToken> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
@@ -160,7 +160,7 @@ export function PgAdapter(): Adapter {
       return result.rows[0] as VerificationToken;
     },
 
-    async useVerificationToken({ identifier, token }) {
+    async useVerificationToken({ identifier, token }: { identifier: string; token: string }): Promise<VerificationToken | null> {
       await ensureTables();
       const p = getAuthPool();
       const result = await p.query(
