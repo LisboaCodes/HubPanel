@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from "next-auth";
 import EmailProvider from "next-auth/providers/email";
 import { Resend } from "resend";
+import { PgAdapter } from "./auth-adapter";
 
 function getResend() {
   return new Resend(process.env.RESEND_API_KEY!);
@@ -23,6 +24,8 @@ function getAuthorizedEmails(): string[] {
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
+
+  adapter: PgAdapter(),
 
   session: {
     strategy: "jwt",
