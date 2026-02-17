@@ -19,7 +19,7 @@ const pools: Map<string, Pool> = new Map();
 export function getDatabaseConfigs(): DatabaseConfig[] {
   const configs: DatabaseConfig[] = [];
 
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= 10; i++) {
     const name = process.env[`DB_${i}_NAME`];
     const host = process.env[`DB_${i}_HOST`];
     const port = process.env[`DB_${i}_PORT`];
