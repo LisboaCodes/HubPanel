@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getDatabaseConfigs, getDriver } from "@/lib/db";
+import { getAllDatabaseConfigs, getDriverAsync } from "@/lib/db";
 
 export async function GET() {
   try {
@@ -10,11 +10,11 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const configs = getDatabaseConfigs();
+    const configs = await getAllDatabaseConfigs();
     const results = await Promise.all(
       configs.map(async (config) => {
         try {
-          const driver = getDriver(config.name);
+          const driver = await getDriverAsync(config.name);
           const stats = await driver.getDatabaseStats();
           const tables = await driver.listTables();
 
@@ -23,6 +23,7 @@ export async function GET() {
             host: config.host,
             port: config.port,
             type: config.type,
+            source: config.source,
             size: stats.db_size ?? "0 bytes",
             tableCount: tables.length,
             activeConnections: stats.active_connections ?? 0,
@@ -34,6 +35,7 @@ export async function GET() {
             host: config.host,
             port: config.port,
             type: config.type,
+            source: config.source,
             size: "N/A",
             tableCount: 0,
             activeConnections: 0,

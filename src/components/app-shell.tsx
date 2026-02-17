@@ -21,6 +21,7 @@ const pageTitles: Record<string, string> = {
   "/databases": "Bancos de Dados",
   "/monitoring": "Monitoramento",
   "/logs": "Logs",
+  "/commands": "Comandos SQL",
 };
 
 function getBreadcrumbs(pathname: string): { label: string; href?: string }[] {

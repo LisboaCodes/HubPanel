@@ -2,6 +2,7 @@ import { Pool, PoolConfig, QueryResult } from "pg";
 import type { DbType, DatabaseDriver } from "./drivers/types";
 import { PostgresDriver } from "./drivers/postgres";
 import { MySQLDriver } from "./drivers/mysql";
+import { listConnections, type StoredConnection } from "./connections";
 
 export interface DatabaseConfig {
   name: string;
@@ -11,16 +12,23 @@ export interface DatabaseConfig {
   password: string;
   database: string;
   type: DbType;
+  source: "env" | "stored";
 }
 
 const pools: Map<string, Pool> = new Map();
 const drivers: Map<string, DatabaseDriver> = new Map();
+
+/** Cache for stored connections to avoid hitting DB every time. */
+let storedConfigsCache: DatabaseConfig[] | null = null;
+let storedConfigsCacheTime = 0;
+const CACHE_TTL = 10_000; // 10 seconds
 
 /**
  * Read all database configurations from environment variables.
  * Expects DB_X_NAME, DB_X_HOST, DB_X_PORT, DB_X_USER, DB_X_PASSWORD, DB_X_TYPE
  * for X from 1 to 10.
  */
+/** Read database configs from environment variables only (sync). */
 export function getDatabaseConfigs(): DatabaseConfig[] {
   const configs: DatabaseConfig[] = [];
 
@@ -45,6 +53,7 @@ export function getDatabaseConfigs(): DatabaseConfig[] {
         password,
         database: name,
         type,
+        source: "env",
       });
     }
   }
@@ -53,15 +62,88 @@ export function getDatabaseConfigs(): DatabaseConfig[] {
 }
 
 /**
- * Find the configuration for a specific database by name.
+ * Get ALL database configs: env vars + stored connections from hubpanel DB.
+ * This is async because it reads from the database.
+ */
+export async function getAllDatabaseConfigs(): Promise<DatabaseConfig[]> {
+  const envConfigs = getDatabaseConfigs();
+
+  try {
+    const now = Date.now();
+    if (!storedConfigsCache || now - storedConfigsCacheTime > CACHE_TTL) {
+      const stored = await listConnections();
+      storedConfigsCache = stored.map((s: StoredConnection) => ({
+        name: s.name,
+        host: s.host,
+        port: s.port,
+        user: s.username,
+        password: s.password,
+        database: s.database,
+        type: s.db_type as DbType,
+        source: "stored" as const,
+      }));
+      storedConfigsCacheTime = now;
+    }
+
+    // Merge: env configs take priority (by name)
+    const envNames = new Set(envConfigs.map((c) => c.name));
+    const storedOnly = (storedConfigsCache || []).filter((c) => !envNames.has(c.name));
+    return [...envConfigs, ...storedOnly];
+  } catch {
+    // If stored connections can't be read, just return env configs
+    return envConfigs;
+  }
+}
+
+/** Invalidate the stored connections cache (call after add/remove). */
+export function invalidateStoredConfigsCache(): void {
+  storedConfigsCache = null;
+  storedConfigsCacheTime = 0;
+}
+
+/**
+ * Find the configuration for a specific database by name (sync, env only).
  */
 function findConfig(dbName: string): DatabaseConfig | undefined {
-  return getDatabaseConfigs().find((c) => c.name === dbName);
+  // First check env configs
+  const envConfig = getDatabaseConfigs().find((c) => c.name === dbName);
+  if (envConfig) return envConfig;
+
+  // Check cached stored configs
+  if (storedConfigsCache) {
+    return storedConfigsCache.find((c) => c.name === dbName);
+  }
+
+  return undefined;
+}
+
+/**
+ * Find config async (checks both env and stored).
+ */
+async function findConfigAsync(dbName: string): Promise<DatabaseConfig | undefined> {
+  const all = await getAllDatabaseConfigs();
+  return all.find((c) => c.name === dbName);
 }
 
 /**
  * Get or create a DatabaseDriver for the given database name.
  * Drivers are cached so subsequent calls reuse the same instance.
+ * Checks both env vars and stored connections.
+ */
+export async function getDriverAsync(dbName: string): Promise<DatabaseDriver> {
+  const existing = drivers.get(dbName);
+  if (existing) return existing;
+
+  const config = await findConfigAsync(dbName);
+  if (!config) {
+    throw new Error(`Database "${dbName}" is not configured.`);
+  }
+
+  return createDriver(dbName, config);
+}
+
+/**
+ * Get or create a DatabaseDriver (sync version, env-only).
  */
 export function getDriver(dbName: string): DatabaseDriver {
   const existing = drivers.get(dbName);
@@ -74,6 +156,10 @@ export function getDriver(dbName: string): DatabaseDriver {
     );
   }
 
+  return createDriver(dbName, config);
+}
+
+function createDriver(dbName: string, config: DatabaseConfig): DatabaseDriver {
   let driver: DatabaseDriver;
 
   if (config.type === "mysql" || config.type === "mariadb") {
@@ -88,7 +174,6 @@ export function getDriver(dbName: string): DatabaseDriver {
       config.type
     );
   } else {
-    // PostgreSQL and Supabase (PG-compatible)
     driver = new PostgresDriver(
       {
         host: config.host,

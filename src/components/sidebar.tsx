@@ -9,6 +9,7 @@ import {
   Database,
   Activity,
   FileText,
+  BookOpen,
   LogOut,
   Menu,
   X,
@@ -29,6 +30,7 @@ const navItems: NavItem[] = [
   { label: "Bancos de Dados", href: "/databases", icon: Database },
   { label: "Monitoramento", href: "/monitoring", icon: Activity },
   { label: "Logs", href: "/logs", icon: FileText },
+  { label: "Comandos SQL", href: "/commands", icon: BookOpen },
 ];
 
 interface SidebarProps {
