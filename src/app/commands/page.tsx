@@ -1,7 +1,19 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { BookOpen, Search, Code2, Copy, Check } from "lucide-react";
+import React, { useState, useMemo, useRef, useCallback } from "react";
+import {
+  BookOpen,
+  Search,
+  Code2,
+  Copy,
+  Check,
+  Sparkles,
+  Send,
+  Loader2,
+  X,
+  ExternalLink,
+  Trash2,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +24,6 @@ import {
   categories,
   type SqlCommand,
   type DbEngine,
-  type CommandCategory,
 } from "./commands-data";
 
 // ---------------------------------------------------------------------------
@@ -168,6 +179,299 @@ function CommandCard({ cmd, dbFilter }: { cmd: SqlCommand; dbFilter: DbFilter })
 }
 
 // ---------------------------------------------------------------------------
+// AI Markdown Renderer (simple)
+// ---------------------------------------------------------------------------
+
+function AiMarkdown({ content }: { content: string }) {
+  // Split into segments: code blocks vs text
+  const segments = content.split(/(```[\s\S]*?```)/g);
+
+  return (
+    <div className="space-y-3 text-sm leading-relaxed">
+      {segments.map((segment, i) => {
+        // Code block
+        if (segment.startsWith("```")) {
+          const match = segment.match(/```(\w*)\n?([\s\S]*?)```/);
+          const code = match ? match[2].trim() : segment.replace(/```/g, "").trim();
+          return (
+            <div key={i} className="group/code relative">
+              <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs leading-relaxed text-zinc-300">
+                <code>{code}</code>
+              </pre>
+              <CopyButton text={code} />
+            </div>
+          );
+        }
+
+        // Regular text - process inline markdown
+        if (!segment.trim()) return null;
+        return (
+          <div key={i} className="text-foreground">
+            {segment.split("\n").map((line, li) => {
+              if (!line.trim()) return <br key={li} />;
+
+              // Headers
+              if (line.startsWith("### ")) {
+                return <h4 key={li} className="mt-3 mb-1 text-sm font-semibold text-foreground">{line.slice(4)}</h4>;
+              }
+              if (line.startsWith("## ")) {
+                return <h3 key={li} className="mt-4 mb-1 text-base font-semibold text-foreground">{line.slice(3)}</h3>;
+              }
+              if (line.startsWith("# ")) {
+                return <h2 key={li} className="mt-4 mb-2 text-lg font-bold text-foreground">{line.slice(2)}</h2>;
+              }
+
+              // Bold
+              const processed = line.replace(
+                /\*\*(.*?)\*\*/g,
+                '<strong class="font-semibold text-foreground">$1</strong>'
+              ).replace(
+                /`([^`]+)`/g,
+                '<code class="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-purple-300">$1</code>'
+              );
+
+              // List items
+              if (line.trim().startsWith("- ") || line.trim().startsWith("* ")) {
+                return (
+                  <div key={li} className="flex gap-2 pl-2 text-muted-foreground">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/50" />
+                    <span dangerouslySetInnerHTML={{ __html: processed.replace(/^[\s]*[-*]\s/, "") }} />
+                  </div>
+                );
+              }
+
+              // Numbered list
+              const numMatch = line.trim().match(/^(\d+)\.\s/);
+              if (numMatch) {
+                return (
+                  <div key={li} className="flex gap-2 pl-2 text-muted-foreground">
+                    <span className="shrink-0 font-mono text-xs text-primary">{numMatch[1]}.</span>
+                    <span dangerouslySetInnerHTML={{ __html: processed.replace(/^\s*\d+\.\s/, "") }} />
+                  </div>
+                );
+              }
+
+              return <p key={li} className="text-muted-foreground" dangerouslySetInnerHTML={{ __html: processed }} />;
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI Assistant
+// ---------------------------------------------------------------------------
+
+interface AiMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations?: string[];
+}
+
+function AiAssistant() {
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState<AiMessage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  }, []);
+
+  const handleAsk = async () => {
+    const q = question.trim();
+    if (!q || loading) return;
+
+    setQuestion("");
+    setError(null);
+    setMessages((prev) => [...prev, { role: "user", content: q }]);
+    setLoading(true);
+    scrollToBottom();
+
+    try {
+      const res = await fetch("/api/ai/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Erro ao consultar IA");
+        return;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.answer,
+          citations: data.citations,
+        },
+      ]);
+      scrollToBottom();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro de rede");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleAsk();
+    }
+  };
+
+  const clearChat = () => {
+    setMessages([]);
+    setError(null);
+  };
+
+  const suggestions = [
+    "Como criar um indice parcial no PostgreSQL?",
+    "Diferenca entre JOIN e LATERAL JOIN",
+    "Como fazer paginacao eficiente com milhoes de registros?",
+    "MySQL vs PostgreSQL: quando usar cada um?",
+    "Como migrar dados de MySQL para PostgreSQL?",
+    "Boas praticas de seguranca para bancos de dados",
+  ];
+
+  return (
+    <Card className="border-purple-500/20 bg-gradient-to-b from-purple-500/5 to-transparent">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-500/15">
+              <Sparkles className="h-4 w-4 text-purple-400" />
+            </div>
+            Assistente SQL com IA
+            <Badge variant="outline" className="border-purple-500/30 bg-purple-500/15 text-purple-400 text-[10px]">
+              Perplexity
+            </Badge>
+          </CardTitle>
+          {messages.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearChat} className="gap-1 text-xs text-muted-foreground">
+              <Trash2 className="h-3 w-3" /> Limpar
+            </Button>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Pergunte qualquer coisa sobre SQL, bancos de dados, performance ou migracoes.
+        </p>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {/* Messages */}
+        {messages.length > 0 && (
+          <div className="max-h-[500px] space-y-4 overflow-y-auto rounded-md border border-border bg-background/50 p-4">
+            {messages.map((msg, i) => (
+              <div key={i} className={`${msg.role === "user" ? "flex justify-end" : ""}`}>
+                {msg.role === "user" ? (
+                  <div className="max-w-[80%] rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">
+                    {msg.content}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                      <span className="text-xs font-medium text-purple-400">Perplexity AI</span>
+                    </div>
+                    <AiMarkdown content={msg.content} />
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Fontes</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.citations.map((url, ci) => {
+                            let domain = "";
+                            try { domain = new URL(url).hostname.replace("www.", ""); } catch { domain = url; }
+                            return (
+                              <a
+                                key={ci}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                              >
+                                <ExternalLink className="h-2.5 w-2.5" />
+                                {domain}
+                              </a>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
+                Pensando...
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            <X className="h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {/* Suggestions (when no messages) */}
+        {messages.length === 0 && (
+          <div className="flex flex-wrap gap-2">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => { setQuestion(s); }}
+                className="rounded-full border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-purple-500/30 hover:bg-purple-500/10 hover:text-purple-300"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="flex gap-2">
+          <Input
+            placeholder="Ex: Como otimizar uma query com JOIN em milhoes de registros?"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={loading}
+            className="flex-1"
+          />
+          <Button
+            onClick={handleAsk}
+            disabled={loading || !question.trim()}
+            className="gap-1.5 bg-purple-600 hover:bg-purple-700"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -200,10 +504,13 @@ export default function CommandsPage() {
               Referencia de Comandos SQL
             </h1>
             <p className="text-sm text-muted-foreground">
-              {totalCommands} comandos &middot; PostgreSQL, MySQL &amp; MariaDB
+              {totalCommands} comandos &middot; PostgreSQL, MySQL &amp; MariaDB &middot; IA integrada
             </p>
           </div>
         </div>
+
+        {/* AI Assistant */}
+        <AiAssistant />
 
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
