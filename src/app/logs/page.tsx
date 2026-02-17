@@ -53,8 +53,10 @@ interface DatabaseInfo {
   status: string;
 }
 
+const ALL_VALUE = "__all__";
+
 const OPERATION_TYPES = [
-  { value: "", label: "Todas" },
+  { value: ALL_VALUE, label: "Todas" },
   { value: "QUERY", label: "Query" },
   { value: "INSERT", label: "Insert" },
   { value: "UPDATE", label: "Update" },
@@ -74,8 +76,8 @@ export default function LogsPage() {
   const [hasMore, setHasMore] = useState(true);
 
   // Filters
-  const [filterDb, setFilterDb] = useState("");
-  const [filterOperation, setFilterOperation] = useState("");
+  const [filterDb, setFilterDb] = useState(ALL_VALUE);
+  const [filterOperation, setFilterOperation] = useState(ALL_VALUE);
 
   // Fetch databases for filter dropdown
   useEffect(() => {
@@ -101,8 +103,8 @@ export default function LogsPage() {
         offset: String(page * PAGE_SIZE),
       });
 
-      if (filterDb) params.set("database", filterDb);
-      if (filterOperation) params.set("operation", filterOperation);
+      if (filterDb && filterDb !== ALL_VALUE) params.set("database", filterDb);
+      if (filterOperation && filterOperation !== ALL_VALUE) params.set("operation", filterOperation);
 
       const res = await fetch(`/api/logs?${params.toString()}`);
       if (res.ok) {
@@ -203,7 +205,7 @@ export default function LogsPage() {
                 <SelectValue placeholder="Todos os bancos" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos os bancos</SelectItem>
+                <SelectItem value={ALL_VALUE}>Todos os bancos</SelectItem>
                 {databases.map((db) => (
                   <SelectItem key={db.name} value={db.name}>
                     {db.name}
@@ -228,13 +230,13 @@ export default function LogsPage() {
               </SelectContent>
             </Select>
 
-            {(filterDb || filterOperation) && (
+            {(filterDb !== ALL_VALUE || filterOperation !== ALL_VALUE) && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setFilterDb("");
-                  setFilterOperation("");
+                  setFilterDb(ALL_VALUE);
+                  setFilterOperation(ALL_VALUE);
                 }}
                 className="text-xs"
               >

@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getPool } from "@/lib/db";
-import {
-  getTableData,
-  insertRow,
-  updateRow,
-  deleteRow,
-  type DataFilter,
-} from "@/lib/queries";
+import { getDriver } from "@/lib/db";
+import type { DataFilter } from "@/lib/drivers/types";
 import { logActivity } from "@/lib/logger";
 
 /* ------------------------------------------------------------------ */
@@ -39,7 +33,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Parse optional filter JSON: [{ column, operator, value }]
     let filters: DataFilter[] = [];
     if (filterParam) {
       try {
@@ -52,8 +45,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const pool = getPool(db);
-    const data = await getTableData(pool, schema, table, {
+    const driver = getDriver(db);
+    const data = await driver.getTableData(schema, table, {
       page,
       pageSize,
       orderBy,
@@ -97,8 +90,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
-    const row = await insertRow(pool, schema, table, data);
+    const driver = getDriver(database);
+    const row = await driver.insertRow(schema, table, data);
 
     logActivity(
       session.user?.email ?? "unknown",
@@ -150,8 +143,8 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
-    const row = await updateRow(pool, schema, table, primaryKey, pkValue, data);
+    const driver = getDriver(database);
+    const row = await driver.updateRow(schema, table, primaryKey, pkValue, data);
 
     if (!row) {
       return NextResponse.json(
@@ -207,8 +200,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
-    const row = await deleteRow(pool, schema, table, primaryKey, pkValue);
+    const driver = getDriver(database);
+    const row = await driver.deleteRow(schema, table, primaryKey, pkValue);
 
     if (!row) {
       return NextResponse.json(

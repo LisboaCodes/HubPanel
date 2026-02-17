@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getPool } from "@/lib/db";
+import { getDriver, getDatabaseConfigs } from "@/lib/db";
 import { logActivity } from "@/lib/logger";
 
 /* ------------------------------------------------------------------ */
-/*  GET - List PostgreSQL roles / users                                */
+/*  GET - List database users/roles                                    */
 /* ------------------------------------------------------------------ */
 
 export async function GET(request: NextRequest) {
@@ -25,22 +25,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const pool = getPool(db);
-    const result = await pool.query(
-      `SELECT
-         rolname AS username,
-         rolsuper AS is_superuser,
-         rolcreatedb AS can_create_db,
-         rolcreaterole AS can_create_role,
-         rolcanlogin AS can_login,
-         rolreplication AS is_replication,
-         rolconnlimit AS connection_limit,
-         rolvaliduntil AS valid_until
-       FROM pg_roles
-       ORDER BY rolname`
+    const config = getDatabaseConfigs().find((c) => c.name === db);
+    if (!config) {
+      return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    }
+
+    const driver = getDriver(db);
+
+    if (config.type === "mysql" || config.type === "mariadb") {
+      const { rows } = await driver.query(
+        `SELECT User AS username, Host AS host,
+                IF(Super_priv = 'Y', true, false) AS is_superuser,
+                IF(Create_priv = 'Y', true, false) AS can_create_db
+         FROM mysql.user ORDER BY User`
+      );
+      return NextResponse.json(rows);
+    }
+
+    // PostgreSQL / Supabase
+    const { rows } = await driver.query(
+      `SELECT rolname AS username, rolsuper AS is_superuser,
+              rolcreatedb AS can_create_db, rolcreaterole AS can_create_role,
+              rolcanlogin AS can_login, rolreplication AS is_replication,
+              rolconnlimit AS connection_limit, rolvaliduntil AS valid_until
+       FROM pg_roles ORDER BY rolname`
     );
 
-    return NextResponse.json(result.rows);
+    return NextResponse.json(rows);
   } catch (error) {
     console.error("[api/users] GET Error:", error);
     return NextResponse.json(
@@ -51,7 +62,7 @@ export async function GET(request: NextRequest) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  POST - Create PostgreSQL user                                      */
+/*  POST - Create user                                                 */
 /* ------------------------------------------------------------------ */
 
 export async function POST(request: NextRequest) {
@@ -76,7 +87,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate username: only allow alphanumeric and underscores
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(username)) {
       return NextResponse.json(
         { error: "Invalid username. Use only letters, numbers, and underscores." },
@@ -84,35 +94,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
+    const config = getDatabaseConfigs().find((c) => c.name === database);
+    if (!config) {
+      return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    }
 
-    // Create the role with LOGIN privilege
-    // Using parameterized approach where possible; role names can't be parameterized
-    // so we validate strictly above
-    await pool.query(
-      `CREATE ROLE "${username}" WITH LOGIN PASSWORD '${password.replace(/'/g, "''")}'`
-    );
+    const driver = getDriver(database);
+    const escapedPassword = password.replace(/'/g, "''");
 
-    // Apply permissions
-    const allowedPermissions = [
-      "SELECT",
-      "INSERT",
-      "UPDATE",
-      "DELETE",
-      "CREATE",
-      "USAGE",
-      "ALL PRIVILEGES",
-    ];
-
-    const validPerms = permissions.filter((p) =>
-      allowedPermissions.includes(p.toUpperCase())
-    );
-
-    if (validPerms.length > 0) {
-      const permStr = validPerms.join(", ");
-      await pool.query(
-        `GRANT ${permStr} ON ALL TABLES IN SCHEMA public TO "${username}"`
-      );
+    if (config.type === "mysql" || config.type === "mariadb") {
+      await driver.query(`CREATE USER '${username}'@'%' IDENTIFIED BY '${escapedPassword}'`);
+      const allowedPermissions = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALL PRIVILEGES"];
+      const validPerms = permissions.filter((p) => allowedPermissions.includes(p.toUpperCase()));
+      if (validPerms.length > 0) {
+        await driver.query(`GRANT ${validPerms.join(", ")} ON ${database}.* TO '${username}'@'%'`);
+        await driver.query("FLUSH PRIVILEGES");
+      }
+    } else {
+      await driver.query(`CREATE ROLE "${username}" WITH LOGIN PASSWORD '${escapedPassword}'`);
+      const allowedPermissions = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "USAGE", "ALL PRIVILEGES"];
+      const validPerms = permissions.filter((p) => allowedPermissions.includes(p.toUpperCase()));
+      if (validPerms.length > 0) {
+        await driver.query(`GRANT ${validPerms.join(", ")} ON ALL TABLES IN SCHEMA public TO "${username}"`);
+      }
     }
 
     logActivity(
@@ -120,7 +124,7 @@ export async function POST(request: NextRequest) {
       database,
       "CREATE_USER",
       `User "${username}" created successfully`,
-      `CREATE ROLE ${username}`
+      `CREATE USER ${username}`
     );
 
     return NextResponse.json(
@@ -137,7 +141,7 @@ export async function POST(request: NextRequest) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  DELETE - Drop PostgreSQL user                                      */
+/*  DELETE - Drop user                                                 */
 /* ------------------------------------------------------------------ */
 
 export async function DELETE(request: NextRequest) {
@@ -160,7 +164,6 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Validate username
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(username)) {
       return NextResponse.json(
         { error: "Invalid username format" },
@@ -168,20 +171,26 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
+    const config = getDatabaseConfigs().find((c) => c.name === database);
+    if (!config) {
+      return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    }
 
-    // Revoke all privileges first, then drop
-    await pool.query(
-      `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "${username}"`
-    );
-    await pool.query(`DROP ROLE IF EXISTS "${username}"`);
+    const driver = getDriver(database);
+
+    if (config.type === "mysql" || config.type === "mariadb") {
+      await driver.query(`DROP USER IF EXISTS '${username}'@'%'`);
+    } else {
+      await driver.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "${username}"`);
+      await driver.query(`DROP ROLE IF EXISTS "${username}"`);
+    }
 
     logActivity(
       session.user?.email ?? "unknown",
       database,
       "DROP_USER",
       `User "${username}" dropped successfully`,
-      `DROP ROLE ${username}`
+      `DROP USER ${username}`
     );
 
     return NextResponse.json({

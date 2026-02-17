@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getPool } from "@/lib/db";
+import { getDriver } from "@/lib/db";
 import { logActivity } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
@@ -21,19 +21,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pool = getPool(database);
+    const driver = getDriver(database);
     const start = performance.now();
 
     try {
-      const result = await pool.query(sql);
+      const result = await driver.query(sql);
       const duration = Math.round((performance.now() - start) * 100) / 100;
-
-      const fields = result.fields
-        ? result.fields.map((f) => ({
-            name: f.name,
-            dataTypeID: f.dataTypeID,
-          }))
-        : [];
 
       logActivity(
         session.user?.email ?? "unknown",
@@ -45,8 +38,8 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         rows: result.rows,
-        rowCount: result.rowCount,
-        fields,
+        rowCount: result.rows.length,
+        fields: result.fields,
         duration,
       });
     } catch (queryError) {

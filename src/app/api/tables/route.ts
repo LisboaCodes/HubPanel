@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getPool } from "@/lib/db";
-import { listTables, getTableStructure } from "@/lib/queries";
+import { getDriver } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,16 +22,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const pool = getPool(db);
+    const driver = getDriver(db);
 
     // If a specific table is requested, return its structure
     if (table) {
-      const structure = await getTableStructure(pool, schema, table);
+      const structure = await driver.getTableStructure(schema, table);
       return NextResponse.json(structure);
     }
 
     // Otherwise, list all tables in the schema
-    const tables = await listTables(pool, schema);
+    const tables = await driver.listTables(schema);
     return NextResponse.json(tables);
   } catch (error) {
     console.error("[api/tables] Error:", error);

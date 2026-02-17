@@ -21,10 +21,34 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+type DbType = "postgresql" | "mysql" | "mariadb" | "supabase";
+
+const DB_TYPE_LABELS: Record<DbType, string> = {
+  postgresql: "PostgreSQL",
+  mysql: "MySQL",
+  mariadb: "MariaDB",
+  supabase: "Supabase",
+};
+
+const DB_TYPE_COLORS: Record<DbType, string> = {
+  postgresql: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  mysql: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  mariadb: "bg-teal-500/15 text-teal-400 border-teal-500/30",
+  supabase: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+};
+
+const DB_TYPE_DOT: Record<DbType, string> = {
+  postgresql: "bg-blue-500",
+  mysql: "bg-orange-500",
+  mariadb: "bg-teal-500",
+  supabase: "bg-emerald-500",
+};
+
 interface DatabaseInfo {
   name: string;
   host: string;
   port: number;
+  type: DbType;
   size: string;
   tableCount: number;
   activeConnections: number;
@@ -57,7 +81,6 @@ export default function DashboardPage() {
       const data: DatabaseInfo[] = await res.json();
       setDatabases(data);
 
-      // Calculate stats
       const totalTables = data.reduce((sum, db) => sum + db.tableCount, 0);
       const totalConnections = data.reduce(
         (sum, db) => sum + db.activeConnections,
@@ -117,6 +140,8 @@ export default function DashboardPage() {
     },
   ];
 
+  const getDbTypeLabel = (type: DbType) => DB_TYPE_LABELS[type] || type;
+
   return (
     <AppShell>
       <div className="space-y-6">
@@ -125,7 +150,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-sm text-muted-foreground">
-              Visao geral dos seus bancos de dados PostgreSQL
+              Visao geral dos seus bancos de dados
             </p>
           </div>
           <Button
@@ -235,6 +260,14 @@ export default function DashboardPage() {
                         </Badge>
                       </div>
                     </div>
+                    {/* DB Type Badge */}
+                    <Badge
+                      variant="outline"
+                      className={`w-fit text-[10px] font-medium ${DB_TYPE_COLORS[db.type] || DB_TYPE_COLORS.postgresql}`}
+                    >
+                      <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${DB_TYPE_DOT[db.type] || DB_TYPE_DOT.postgresql}`} />
+                      {getDbTypeLabel(db.type)}
+                    </Badge>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     <div className="flex items-center justify-between text-sm">

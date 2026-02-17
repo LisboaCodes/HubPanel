@@ -1,4 +1,7 @@
 import { Pool, PoolConfig, QueryResult } from "pg";
+import type { DbType, DatabaseDriver } from "./drivers/types";
+import { PostgresDriver } from "./drivers/postgres";
+import { MySQLDriver } from "./drivers/mysql";
 
 export interface DatabaseConfig {
   name: string;
@@ -7,14 +10,16 @@ export interface DatabaseConfig {
   user: string;
   password: string;
   database: string;
+  type: DbType;
 }
 
 const pools: Map<string, Pool> = new Map();
+const drivers: Map<string, DatabaseDriver> = new Map();
 
 /**
  * Read all database configurations from environment variables.
- * Expects DB_1_NAME, DB_1_HOST, DB_1_PORT, DB_1_USER, DB_1_PASSWORD
- * through DB_5_NAME, DB_5_HOST, DB_5_PORT, DB_5_USER, DB_5_PASSWORD.
+ * Expects DB_X_NAME, DB_X_HOST, DB_X_PORT, DB_X_USER, DB_X_PASSWORD, DB_X_TYPE
+ * for X from 1 to 10.
  */
 export function getDatabaseConfigs(): DatabaseConfig[] {
   const configs: DatabaseConfig[] = [];
@@ -25,15 +30,21 @@ export function getDatabaseConfigs(): DatabaseConfig[] {
     const port = process.env[`DB_${i}_PORT`];
     const user = process.env[`DB_${i}_USER`];
     const password = process.env[`DB_${i}_PASSWORD`];
+    const rawType = process.env[`DB_${i}_TYPE`] ?? "postgresql";
 
     if (name && host && user && password) {
+      const type = (["postgresql", "mysql", "mariadb", "supabase"].includes(rawType)
+        ? rawType
+        : "postgresql") as DbType;
+
       configs.push({
         name,
         host,
-        port: port ? parseInt(port, 10) : 5432,
+        port: port ? parseInt(port, 10) : (type === "mysql" || type === "mariadb" ? 3306 : 5432),
         user,
         password,
         database: name,
+        type,
       });
     }
   }
@@ -49,19 +60,69 @@ function findConfig(dbName: string): DatabaseConfig | undefined {
 }
 
 /**
- * Get or create a connection pool for the given database name.
- * Pools are cached so subsequent calls reuse the same pool.
+ * Get or create a DatabaseDriver for the given database name.
+ * Drivers are cached so subsequent calls reuse the same instance.
  */
-export function getPool(dbName: string): Pool {
-  const existing = pools.get(dbName);
-  if (existing) {
-    return existing;
-  }
+export function getDriver(dbName: string): DatabaseDriver {
+  const existing = drivers.get(dbName);
+  if (existing) return existing;
 
   const config = findConfig(dbName);
   if (!config) {
     throw new Error(
       `Database "${dbName}" is not configured. Check your environment variables.`
+    );
+  }
+
+  let driver: DatabaseDriver;
+
+  if (config.type === "mysql" || config.type === "mariadb") {
+    driver = new MySQLDriver(
+      {
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password,
+        database: config.database,
+      },
+      config.type
+    );
+  } else {
+    // PostgreSQL and Supabase (PG-compatible)
+    driver = new PostgresDriver(
+      {
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password,
+        database: config.database,
+      },
+      config.type
+    );
+  }
+
+  drivers.set(dbName, driver);
+  return driver;
+}
+
+/**
+ * Get or create a pg Pool for the given database name (backward compatibility).
+ * Only works for PostgreSQL/Supabase databases.
+ */
+export function getPool(dbName: string): Pool {
+  const existing = pools.get(dbName);
+  if (existing) return existing;
+
+  const config = findConfig(dbName);
+  if (!config) {
+    throw new Error(
+      `Database "${dbName}" is not configured. Check your environment variables.`
+    );
+  }
+
+  if (config.type === "mysql" || config.type === "mariadb") {
+    throw new Error(
+      `Database "${dbName}" is of type ${config.type}. Use getDriver() instead of getPool().`
     );
   }
 
@@ -77,7 +138,6 @@ export function getPool(dbName: string): Pool {
   };
 
   const pool = new Pool(poolConfig);
-
   pool.on("error", (err) => {
     console.error(`[db] Unexpected error on idle client for "${dbName}":`, err);
   });
@@ -105,36 +165,38 @@ export async function query<T extends Record<string, unknown> = Record<string, u
 
 /**
  * Test the connection to a specific database.
- * Returns true if the connection succeeds, or throws with a descriptive error.
  */
 export async function testConnection(
   dbName: string
 ): Promise<{ ok: true; latencyMs: number }> {
-  const pool = getPool(dbName);
-  const start = Date.now();
-
-  const client = await pool.connect();
-  try {
-    await client.query("SELECT 1");
-    const latencyMs = Date.now() - start;
-    return { ok: true, latencyMs };
-  } finally {
-    client.release();
+  const config = findConfig(dbName);
+  if (!config) {
+    throw new Error(`Database "${dbName}" is not configured.`);
   }
+
+  const start = Date.now();
+  const driver = getDriver(dbName);
+  await driver.query("SELECT 1");
+  const latencyMs = Date.now() - start;
+  return { ok: true, latencyMs };
 }
 
 /**
- * Gracefully shut down all connection pools.
- * Useful for cleanup during server shutdown.
+ * Gracefully shut down all connection pools and drivers.
  */
 export async function closeAllPools(): Promise<void> {
-  const entries = Array.from(pools.entries());
-  for (const [name, pool] of entries) {
-    try {
-      await pool.end();
-    } catch (err) {
+  // Close pg pools
+  for (const [name, pool] of pools.entries()) {
+    try { await pool.end(); } catch (err) {
       console.error(`[db] Error closing pool for "${name}":`, err);
     }
     pools.delete(name);
+  }
+  // Close drivers
+  for (const [name, driver] of drivers.entries()) {
+    try { await driver.close(); } catch (err) {
+      console.error(`[db] Error closing driver for "${name}":`, err);
+    }
+    drivers.delete(name);
   }
 }
