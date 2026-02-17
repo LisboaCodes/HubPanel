@@ -1,25 +1,22 @@
 import type { Adapter, AdapterUser, AdapterAccount, VerificationToken } from "next-auth/adapters";
 import { Pool } from "pg";
-import { getDatabaseConfigs } from "./db";
 
 let pool: Pool | null = null;
 let tableCreated = false;
 
+/**
+ * Returns a dedicated pool for the HubPanel internal database.
+ * Uses HUBPANEL_DB_* env vars (dedicated DB for auth + logs).
+ */
 function getAuthPool(): Pool {
   if (pool) return pool;
 
-  const configs = getDatabaseConfigs();
-  if (configs.length === 0) {
-    throw new Error("No database configured for auth adapter");
-  }
-
-  const c = configs[0];
   pool = new Pool({
-    host: c.host,
-    port: c.port,
-    user: c.user,
-    password: c.password,
-    database: c.database,
+    host: process.env.HUBPANEL_DB_HOST || "localhost",
+    port: parseInt(process.env.HUBPANEL_DB_PORT || "5432", 10),
+    user: process.env.HUBPANEL_DB_USER || "hubpanel",
+    password: process.env.HUBPANEL_DB_PASSWORD || "",
+    database: process.env.HUBPANEL_DB_NAME || "hubpanel",
     max: 3,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,

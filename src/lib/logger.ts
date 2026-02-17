@@ -1,28 +1,39 @@
-import { getDatabaseConfigs, getPool } from "./db";
+import { Pool } from "pg";
 
 const LOGS_TABLE = "hubpanel_logs";
 
+let logPool: Pool | null = null;
 let tableEnsured = false;
 
 /**
- * Return the name of the first configured database, used to store logs.
+ * Returns a dedicated pool for the HubPanel internal database (logs).
+ * Uses HUBPANEL_DB_* env vars.
  */
-function getLogDbName(): string {
-  const configs = getDatabaseConfigs();
-  if (configs.length === 0) {
-    throw new Error("[logger] No databases configured. Cannot store logs.");
-  }
-  return configs[0].name;
+function getLogPool(): Pool {
+  if (logPool) return logPool;
+
+  logPool = new Pool({
+    host: process.env.HUBPANEL_DB_HOST || "localhost",
+    port: parseInt(process.env.HUBPANEL_DB_PORT || "5432", 10),
+    user: process.env.HUBPANEL_DB_USER || "hubpanel",
+    password: process.env.HUBPANEL_DB_PASSWORD || "",
+    database: process.env.HUBPANEL_DB_NAME || "hubpanel",
+    max: 3,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+
+  return logPool;
 }
 
 /**
- * Ensure the hubpanel_logs table exists in the first configured database.
+ * Ensure the hubpanel_logs table exists in the dedicated HubPanel database.
  * Only runs the CREATE TABLE once per process lifetime.
  */
 async function ensureTable(): Promise<void> {
   if (tableEnsured) return;
 
-  const pool = getPool(getLogDbName());
+  const pool = getLogPool();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${LOGS_TABLE} (
       id            BIGSERIAL PRIMARY KEY,
@@ -35,7 +46,6 @@ async function ensureTable(): Promise<void> {
     );
   `);
 
-  // Create an index on timestamp for efficient filtering.
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_hubpanel_logs_timestamp
     ON ${LOGS_TABLE} (timestamp DESC);
@@ -62,7 +72,7 @@ export async function logActivity(
 ): Promise<void> {
   try {
     await ensureTable();
-    const pool = getPool(getLogDbName());
+    const pool = getLogPool();
     await pool.query(
       `INSERT INTO ${LOGS_TABLE} (user_email, database_name, operation, details, sql_query)
        VALUES ($1, $2, $3, $4, $5);`,
@@ -87,7 +97,7 @@ export interface LogFilters {
  */
 export async function getLogs(filters: LogFilters = {}) {
   await ensureTable();
-  const pool = getPool(getLogDbName());
+  const pool = getLogPool();
 
   const conditions: string[] = [];
   const params: unknown[] = [];
