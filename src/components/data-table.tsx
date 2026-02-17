@@ -166,9 +166,13 @@ export function DataTable({
   const handleCellSave = useCallback(
     (rowIdx: number, colName: string, newValue: string) => {
       setEditingCell(null);
-      if (onEdit) {
-        const row = { ...data[rowIdx], [colName]: newValue };
-        onEdit(rowIdx, row);
+      if (onEdit && data[rowIdx]) {
+        const originalValue = String(data[rowIdx][colName] ?? "");
+        // Only trigger edit if value actually changed
+        if (newValue !== originalValue) {
+          const row = { ...data[rowIdx], [colName]: newValue };
+          onEdit(rowIdx, row);
+        }
       }
     },
     [data, onEdit]
@@ -364,20 +368,6 @@ export function DataTable({
                   {(onEdit || onDelete) && (
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {onEdit && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onEdit(rowIdx, row);
-                            }}
-                            title="Editar registro"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
                         {onDelete && (
                           <Button
                             variant="ghost"
